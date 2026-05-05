@@ -1,13 +1,13 @@
 
 'use server';
 /**
- * @fileOverview MSW Badminton AI Commissioner Matchmaking.
+ * @fileOverview TBC AI Commissioner Matchmaking.
  * Structured to receive club data and return perfectly balanced matches 
  * while strictly obeying partner history and skill gap rules.
  */
 
-import {ai} from '@/ai/genkit';
-import {z} from 'genkit';
+import { ai } from '@/ai/genkit';
+import { z } from 'genkit';
 
 const PlayerInputSchema = z.object({
   id: z.string(),
@@ -46,7 +46,7 @@ const matchSuggestionPrompt = ai.definePrompt({
   name: 'matchSuggestionPrompt',
   input: { schema: MatchSuggestionInputSchema },
   output: { schema: MatchSuggestionOutputSchema },
-  prompt: `Act as the "MSW Badminton AI Commissioner," an expert badminton tournament director. 
+  prompt: `Act as the "TBC AI Commissioner," an expert badminton tournament director. 
 Your goal is to generate a fair, competitive, and socially diverse doubles match.
 
 ---
@@ -76,7 +76,7 @@ Return teamA and teamB as arrays of Player IDs.`,
 });
 
 export async function generateMatch(input: MatchSuggestionInput): Promise<MatchSuggestionOutput> {
-  const {output} = await matchSuggestionPrompt(input);
+  const { output } = await matchSuggestionPrompt(input);
   if (!output) throw new Error("AI Commissioner failed to respond");
   return output;
 }

@@ -27,7 +27,7 @@ export function RoleSelector({ onRoleSelect }: RoleSelectorProps) {
       title: 'Queue Master',
       description: 'Manage matches, courts, and player roster with limited settings access',
       icon: Shield,
-      color: 'text-blue-500'
+      color: 'text-primary'
     },
     {
       id: 'player' as UserRole,
@@ -52,16 +52,15 @@ export function RoleSelector({ onRoleSelect }: RoleSelectorProps) {
           <h1 className="text-4xl font-black uppercase tracking-tighter mb-2">Select Your Role</h1>
           <p className="text-muted-foreground font-medium">Choose your access level for this session</p>
         </div>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {roles.map((role) => {
             const Icon = role.icon;
             return (
               <Card
                 key={role.id}
-                className={`cursor-pointer transition-all hover:shadow-lg hover:scale-105 border-2 ${
-                  selectedRole === role.id ? 'border-primary shadow-md' : 'border-border'
-                }`}
+                className={`cursor-pointer transition-all hover:shadow-lg hover:scale-105 border-2 ${selectedRole === role.id ? 'border-primary shadow-md' : 'border-border'
+                  }`}
                 onClick={() => handleSelect(role.id)}
               >
                 <CardHeader>
