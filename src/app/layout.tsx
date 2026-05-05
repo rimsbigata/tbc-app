@@ -8,8 +8,8 @@ import { Analytics } from '@vercel/analytics/next';
 import { RoleSelectorWrapper } from '@/components/role/RoleSelectorWrapper';
 
 export const metadata: Metadata = {
-  title: 'MSW Badminton | Badminton Club',
-  description: 'Badminton court queuing and matching for MSW Badminton.',
+  title: 'TBC | Badminton Club',
+  description: 'Badminton court queuing and matching for TBC.',
   icons: {
     icon: '/favicon.svg',
   },

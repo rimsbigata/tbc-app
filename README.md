@@ -46,4 +46,4 @@ Our deterministic engine ensures fair and socially diverse games:
 - **Animations**: Tailwind CSS Animate + Custom Transitions
 
 ---
-*Built with ❤️ for MSW Badminton Community.*
+*Built with ❤️ for TBC Community.*

@@ -74,10 +74,10 @@ export function Header() {
         <div className="flex items-center gap-4 md:gap-6">
           <Link href="/" className="flex items-center gap-2 md:gap-3 hover:opacity-80 transition-opacity">
             <div className="flex h-8 w-8 md:h-10 md:w-10 items-center justify-center rounded-lg border bg-primary text-primary-foreground shadow-sm">
-              <span className="text-xs md:text-sm font-black tracking-tighter">MSW</span>
+              <span className="text-xs md:text-sm font-black tracking-tighter">TBC</span>
             </div>
             <div className="hidden sm:block">
-              <h1 className="text-sm md:text-base font-black uppercase tracking-tighter leading-none text-primary">MSW Badminton</h1>
+              <h1 className="text-sm md:text-base font-black uppercase tracking-tighter leading-none text-primary">TBC</h1>
               <p className="text-[8px] text-muted-foreground font-black uppercase tracking-[0.25em] mt-1">Command Center</p>
             </div>
           </Link>
