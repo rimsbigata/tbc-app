@@ -7,6 +7,7 @@ export interface Session {
   id: string
   sessionDate: string
   createdAt: Date
+  is_active: boolean
 }
 
 export interface SessionParticipation {
@@ -85,6 +86,7 @@ export interface Player {
   improvementScore: number;
   totalPlayTimeMinutes: number;
   lastAvailableAt?: number;
+  stars?: number;
 }
 
 export interface Court {

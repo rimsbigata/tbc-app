@@ -2,6 +2,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { useSupabaseClub } from '@/context/SupabaseClubContext';
 import { useTheme } from '@/context/ThemeContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,15 +10,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { RefreshCcw, Trash2, QrCode, Upload, Loader2, Sun, Moon, Palette, Settings as SettingsIcon, Trophy, Zap } from 'lucide-react';
+import { RefreshCcw, Trash2, QrCode, Upload, Loader2, Sun, Moon, Palette, Settings as SettingsIcon, Trophy, Zap, Power } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import Image from 'next/image';
 
 export default function SettingsPage() {
+  const router = useRouter();
   const {
     paymentMethods, addPaymentMethod, deletePaymentMethod, resetDailyBoard,
     wipeAllData, defaultWinningScore, setDefaultWinningScore,
-    autoAdvanceEnabled, setAutoAdvanceEnabled, isPlayer, isAdmin
+    autoAdvanceEnabled, setAutoAdvanceEnabled, doubleStarBoostEnabled, setDoubleStarBoostEnabled, isPlayer, isAdmin, isQueueMaster,
+    sessions, endSession
   } = useSupabaseClub();
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
@@ -164,16 +167,49 @@ export default function SettingsPage() {
                     className="data-[state=checked]:bg-primary"
                   />
                 </div>
+
+                <div className="flex items-center justify-between p-4 bg-yellow-500/10 rounded-xl border-2 border-yellow-500/20">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-full bg-yellow-500/20 flex items-center justify-center text-yellow-500">
+                      <Trophy className="h-5 w-5 fill-yellow-500" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-xs font-black uppercase">Double Star Boost</p>
+                      <p className="text-[9px] text-muted-foreground uppercase font-bold">Top 4 players earn 2x stars</p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={doubleStarBoostEnabled}
+                    onCheckedChange={setDoubleStarBoostEnabled}
+                    className="data-[state=checked]:bg-yellow-500"
+                  />
+                </div>
               </CardContent>
             </Card>
           )}
 
-          {isAdmin && (
+          {(isAdmin || isQueueMaster) && (
             <Card className="border-2 shadow-sm bg-destructive/5 border-destructive/20">
               <CardHeader>
                 <CardTitle className="text-sm font-black uppercase tracking-widest text-destructive">Danger Zone</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
+                {sessions.filter(s => s.is_active).length > 0 && (
+                  <Button
+                    onClick={async () => {
+                      const currentSession = sessions.find(s => s.is_active);
+                      if (currentSession && window.confirm('Are you sure you want to end this session?')) {
+                        await endSession(currentSession.id);
+                        toast({ title: 'Session ended' });
+                        router.push('/sessions');
+                      }
+                    }}
+                    variant="outline"
+                    className="w-full font-black uppercase text-[10px] border-destructive/20 text-destructive hover:bg-destructive/10"
+                  >
+                    <Power className="h-3 w-3 mr-2" /> End Session
+                  </Button>
+                )}
                 <Button onClick={handleResetAction} variant="outline" className="w-full font-black uppercase text-[10px] border-destructive/20 text-destructive hover:bg-destructive/10">
                   <RefreshCcw className="h-3 w-3 mr-2" /> Reset Daily Board
                 </Button>

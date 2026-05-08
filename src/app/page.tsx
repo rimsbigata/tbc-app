@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { useSupabaseClub } from '@/context/SupabaseClubContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardFooter } from '@/components/ui/card';
@@ -10,7 +11,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Trash2, Timer, Play, Zap, ArrowLeftRight, User, DoorOpen, ListOrdered, X, Trophy, Ban } from 'lucide-react';
+import { Trash2, Timer, Play, Zap, ArrowLeftRight, User, DoorOpen, ListOrdered, X, Trophy, Ban, Power } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -59,12 +60,13 @@ function WaitTimeBadge({ lastAvailableAt }: { lastAvailableAt?: number }) {
 }
 
 export default function HomePage() {
+  const router = useRouter();
   const {
-    players, matches, courts,
+    players, matches, courts, sessions,
     deleteCourt, startMatch, startTimer,
     endMatch, swapPlayer, assignMatchToCourt, createCourtAndAssignMatch,
     updateMatchScore, addCourt, deleteMatch, defaultWinningScore,
-    isAdmin, isQueueMaster, isPlayer
+    isAdmin, isQueueMaster, isPlayer, endSession
   } = useSupabaseClub();
   const { toast } = useToast();
 
@@ -357,6 +359,24 @@ export default function HomePage() {
                 )}
               </div>
             </ScrollArea>
+            {(isAdmin || isQueueMaster) && sessions.length > 0 && (
+              <div className="p-3 border-t bg-card">
+                <Button
+                  onClick={async () => {
+                    const currentSession = sessions[0];
+                    if (currentSession && window.confirm('Are you sure you want to end this session?')) {
+                      await endSession(currentSession.id);
+                      toast({ title: 'Session ended' });
+                      router.push('/sessions');
+                    }
+                  }}
+                  className="w-full h-12 font-black uppercase tracking-widest gap-2 border-2 border-destructive/20 text-destructive hover:bg-destructive hover:text-white"
+                  variant="outline"
+                >
+                  <Power className="h-4 w-4" /> End Session
+                </Button>
+              </div>
+            )}
           </div>
         )}
 
@@ -618,7 +638,7 @@ export default function HomePage() {
                             <Input
                               type="number" min="0"
                               className={cn("h-12 text-2xl font-black text-center border-2 no-spinner", teamAScore > teamBScore ? "border-primary bg-primary/5" : "bg-card")}
-                              value={match.teamAScore === 0 ? "" : match.teamAScore}
+                              value={match.teamAScore === 0 || !match.teamAScore ? "" : match.teamAScore}
                               placeholder="0"
                               onBlur={(e) => { if (e.target.value === "") handleScoreChange(match.id, 0, match.teamBScore || 0); }}
                               onChange={(e) => handleScoreChange(match.id, parseInt(e.target.value) || 0, match.teamBScore || 0)}
@@ -630,7 +650,7 @@ export default function HomePage() {
                             <Input
                               type="number" min="0"
                               className={cn("h-12 text-2xl font-black text-center border-2 no-spinner", teamBScore > teamAScore ? "border-primary bg-primary/5" : "bg-card")}
-                              value={match.teamBScore === 0 ? "" : match.teamBScore}
+                              value={match.teamBScore === 0 || !match.teamBScore ? "" : match.teamBScore}
                               placeholder="0"
                               onBlur={(e) => { if (e.target.value === "") handleScoreChange(match.id, match.teamAScore || 0, 0); }}
                               onChange={(e) => handleScoreChange(match.id, match.teamAScore || 0, parseInt(e.target.value) || 0)}

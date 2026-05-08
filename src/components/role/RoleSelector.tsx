@@ -40,7 +40,6 @@ export function RoleSelector({ onRoleSelect }: RoleSelectorProps) {
 
   const handleSelect = (role: UserRole) => {
     setSelectedRole(role);
-    // Store in localStorage for persistence
     localStorage.setItem('userRole', role);
     onRoleSelect(role);
   };

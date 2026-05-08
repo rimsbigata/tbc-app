@@ -19,8 +19,13 @@ export default function FeesPage() {
   const { players, fees, paymentMethods, updateFee, togglePayment, isPlayer } = useSupabaseClub();
   const [today, setToday] = useState<string>('');
 
-  const [shuttleFee, setShuttleFee] = useState(0);
-  const [courtFee, setCourtFee] = useState(0);
+  const [shuttleType, setShuttleType] = useState<'shuttle' | 'tube'>('shuttle');
+  const [shuttleQuantity, setShuttleQuantity] = useState(0);
+  const [shuttlePricePerUnit, setShuttlePricePerUnit] = useState(0);
+  const [courtFeePerHour, setCourtFeePerHour] = useState(0);
+  const [numberOfCourts, setNumberOfCourts] = useState(1);
+  const [hoursRented, setHoursRented] = useState(0);
+  const [additionalCourts, setAdditionalCourts] = useState<{ id: number; feePerHour: number }[]>([]);
   const [entranceFee, setEntranceFee] = useState(0);
   const [includeEntranceFee, setIncludeEntranceFee] = useState(true);
 
@@ -29,6 +34,16 @@ export default function FeesPage() {
   }, []);
 
   const currentFee = useMemo(() => fees.find(f => f.id === today), [fees, today]);
+
+  const shuttleFee = useMemo(() => {
+    return shuttleQuantity * shuttlePricePerUnit;
+  }, [shuttleQuantity, shuttlePricePerUnit]);
+
+  const courtFee = useMemo(() => {
+    const baseCourtFee = courtFeePerHour * numberOfCourts * hoursRented;
+    const additionalCourtFee = additionalCourts.reduce((sum, court) => sum + (court.feePerHour * hoursRented), 0);
+    return baseCourtFee + additionalCourtFee;
+  }, [courtFeePerHour, numberOfCourts, hoursRented, additionalCourts]);
 
   const perPlayerFee = useMemo(() => {
     const total = shuttleFee + courtFee + (includeEntranceFee ? entranceFee : 0);
@@ -44,7 +59,7 @@ export default function FeesPage() {
   }, [players, currentFee]);
 
   return (
-    <div className="container mx-auto px-4 py-4 md:py-8 space-y-6 md:space-y-8 pb-24 max-w-5xl h-full overflow-auto">
+    <div className="container mx-auto px-4 py-4 md:py-8 space-y-6 md:space-y-8 pb-24 max-w-5xl">
       <header className="space-y-1 shrink-0">
         <h1 className="text-2xl md:text-3xl font-black uppercase tracking-tighter flex items-center gap-2">
           <Banknote className="h-6 w-6 md:h-8 md:w-8 text-green-600" /> Club Fees
@@ -52,7 +67,7 @@ export default function FeesPage() {
         <p className="text-xs md:text-sm text-muted-foreground font-medium uppercase tracking-widest opacity-60">Daily finance & payment tracking</p>
       </header>
 
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6">
         {!isPlayer && (
           <Card className="lg:col-span-5 border-2 shadow-lg bg-card overflow-hidden">
             <CardHeader className="bg-primary/5 border-b">
@@ -63,17 +78,100 @@ export default function FeesPage() {
             <CardContent className="space-y-6 pt-6">
               <div className="grid grid-cols-1 gap-4">
                 <div className="space-y-1.5">
-                  <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Shuttle Fee</Label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 font-black text-muted-foreground/50">₱</span>
-                    <Input type="number" className="pl-8 font-black text-lg h-12" value={shuttleFee} onChange={e => setShuttleFee(parseFloat(e.target.value) || 0)} />
+                  <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Shuttle Type</Label>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant={shuttleType === 'shuttle' ? 'default' : 'outline'}
+                      className="flex-1 font-black uppercase text-xs h-12 border-2"
+                      onClick={() => setShuttleType('shuttle')}
+                    >
+                      Shuttle
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={shuttleType === 'tube' ? 'default' : 'outline'}
+                      className="flex-1 font-black uppercase text-xs h-12 border-2"
+                      onClick={() => setShuttleType('tube')}
+                    >
+                      Tube
+                    </Button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Quantity</Label>
+                    <Input type="number" className="font-black text-lg h-12" value={shuttleQuantity || ''} onChange={e => setShuttleQuantity(parseInt(e.target.value) || 0)} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Price per {shuttleType}</Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 font-black text-muted-foreground/50">₱</span>
+                      <Input type="number" className="pl-8 font-black text-lg h-12" value={shuttlePricePerUnit || ''} onChange={e => setShuttlePricePerUnit(parseFloat(e.target.value) || 0)} />
+                    </div>
+                  </div>
+                </div>
+                <div className="p-4 bg-primary/5 rounded-xl border-2 border-dashed">
+                  <div className="flex justify-between items-center mb-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Shuttle Fee Total</p>
+                    <p className="text-lg font-black">₱{shuttleFee}</p>
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Court Rental</Label>
+                  <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Court Fee per Hour</Label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 font-black text-muted-foreground/50">₱</span>
-                    <Input type="number" className="pl-8 font-black text-lg h-12" value={courtFee} onChange={e => setCourtFee(parseFloat(e.target.value) || 0)} />
+                    <Input type="number" className="pl-8 font-black text-lg h-12" value={courtFeePerHour || ''} onChange={e => setCourtFeePerHour(parseFloat(e.target.value) || 0)} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Number of Courts</Label>
+                    <Input type="number" min="1" className="font-black text-lg h-12" value={numberOfCourts} onChange={e => setNumberOfCourts(parseInt(e.target.value) || 1)} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Hours Rented</Label>
+                    <Input type="number" min="1" className="font-black text-lg h-12" value={hoursRented || ''} onChange={e => setHoursRented(parseInt(e.target.value) || 0)} />
+                  </div>
+                </div>
+                {additionalCourts.map((court, index) => (
+                  <div key={court.id} className="space-y-1.5 p-4 bg-secondary/50 rounded-xl border-2">
+                    <div className="flex justify-between items-center mb-2">
+                      <Label className="text-[10px] font-black uppercase tracking-widest">Additional Court {index + 1}</Label>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        className="h-8 text-[10px] font-black uppercase"
+                        onClick={() => setAdditionalCourts(prev => prev.filter(c => c.id !== court.id))}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 font-black text-muted-foreground/50">₱</span>
+                      <Input
+                        type="number"
+                        placeholder="Fee per hour"
+                        className="pl-8 font-black text-lg h-12"
+                        value={court.feePerHour || ''}
+                        onChange={e => setAdditionalCourts(prev => prev.map(c => c.id === court.id ? { ...c, feePerHour: parseFloat(e.target.value) || 0 } : c))}
+                      />
+                    </div>
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full h-10 font-black uppercase text-xs border-2 border-dashed"
+                  onClick={() => setAdditionalCourts(prev => [...prev, { id: Date.now(), feePerHour: 0 }])}
+                >
+                  + Add Another Court
+                </Button>
+                <div className="p-4 bg-primary/5 rounded-xl border-2 border-dashed">
+                  <div className="flex justify-between items-center mb-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Court Fee Total</p>
+                    <p className="text-lg font-black">₱{courtFee}</p>
                   </div>
                 </div>
                 <div className="space-y-1.5 p-4 rounded-xl bg-secondary/50 border-2 border-dashed">
@@ -187,8 +285,8 @@ export default function FeesPage() {
               </div>
             </div>
 
-            <ScrollArea className="h-[600px] rounded-2xl border-2 bg-card p-4">
-              <div className="space-y-2">
+            <ScrollArea className="h-[calc(100vh-200px)] rounded-2xl border-2 bg-card">
+              <div className="p-4 space-y-2 pr-4">
                 {sortedPlayers.map(player => {
                   const isPaid = !!currentFee?.payments?.[player.id];
                   return (

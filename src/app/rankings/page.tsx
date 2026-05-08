@@ -6,11 +6,11 @@ import { Trophy, TrendingUp, Medal, Star, Target, Calendar } from 'lucide-react'
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 import { Match, SKILL_LEVELS_SHORT, getSkillColor } from '@/lib/types';
 
 export default function RankingsPage() {
-  const { players, matches } = useSupabaseClub();
+  const { players, matches, updatePlayer, doubleStarBoostEnabled } = useSupabaseClub();
 
   const getRankingsForPeriod = (periodMatches: Match[]) => {
     const stats: Record<string, { wins: number; total: number; diff: number }> = {};
@@ -50,6 +50,19 @@ export default function RankingsPage() {
       });
   };
 
+  const calculateDailyStars = (rankings: any[]) => {
+    rankings.forEach((player, index) => {
+      if (index < 4) {
+        let starsEarned = 4 - index; // 1st=4, 2nd=3, 3rd=2, 4th=1
+        if (doubleStarBoostEnabled) {
+          starsEarned *= 2; // Double the stars if boost is enabled
+        }
+        const currentStars = player.stars || 0;
+        updatePlayer(player.id, { stars: currentStars + starsEarned });
+      }
+    });
+  };
+
   const todayMatches = useMemo(() => {
     const now = new Date().toDateString();
     return matches.filter(m => new Date(m.timestamp).toDateString() === now);
@@ -66,50 +79,65 @@ export default function RankingsPage() {
   const dailyRankings = useMemo(() => getRankingsForPeriod(todayMatches), [todayMatches, players]);
   const monthlyRankings = useMemo(() => getRankingsForPeriod(monthMatches), [monthMatches, players]);
 
-  const RenderLeaderboard = ({ data }: { data: any[] }) => (
+  // Calculate stars for daily rankings
+  useEffect(() => {
+    calculateDailyStars(dailyRankings);
+  }, [dailyRankings]);
+
+  const RenderLeaderboard = ({ data, isDaily }: { data: any[]; isDaily: boolean }) => (
     <div className="grid gap-1.5 pb-24">
-      {data.map((player, i) => (
-        <Card key={player.id} className={cn(
-          "border-2 transition-all hover:scale-[1.005] min-w-0",
-          i === 0 ? "border-primary bg-primary/5" : "border-border"
-        )}>
-          <CardContent className="flex items-center justify-between p-3 gap-2">
-            <div className="flex items-center gap-3 min-w-0 flex-1">
-              <span className={cn(
-                "font-black text-2xl italic min-w-[24px] text-center shrink-0",
-                i === 0 ? "text-primary" : i === 1 ? "text-sky-500" : i === 2 ? "text-blue-700" : "text-muted-foreground/20"
-              )}>
-                {i + 1}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="font-black text-compact flex items-center gap-1.5 truncate">
-                  {player.name}
-                  {i === 0 && <Star className="h-3 w-3 fill-primary text-primary shrink-0" />}
-                </p>
-                <Badge variant="outline" className={cn("text-[8px] font-black uppercase px-1 h-3.5 mt-0.5 truncate", getSkillColor(player.skillLevel))}>
-                  {SKILL_LEVELS_SHORT[player.skillLevel]}
-                </Badge>
+      {data.map((player, i) => {
+        const starCount = isDaily ? (4 - i) : player.stars || 0;
+        const starsToDisplay = isDaily && i < 4 ? starCount : Math.min(starCount, 5);
+        return (
+          <Card key={player.id} className={cn(
+            "border-2 transition-all hover:scale-[1.005] min-w-0",
+            i === 0 ? "border-primary bg-primary/5" : "border-border"
+          )}>
+            <CardContent className="flex items-center justify-between p-3 gap-2">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <span className={cn(
+                  "font-black text-2xl italic min-w-[24px] text-center shrink-0",
+                  i === 0 ? "text-primary" : i === 1 ? "text-sky-500" : i === 2 ? "text-blue-700" : "text-muted-foreground/20"
+                )}>
+                  {i + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-black text-compact flex items-center gap-1.5 truncate">
+                    {player.name}
+                    {starsToDisplay > 0 && (
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        {Array.from({ length: starsToDisplay }).map((_, idx) => (
+                          <Star key={idx} className={cn("h-3 w-3", isDaily ? "fill-primary text-primary" : "fill-yellow-400 text-yellow-400")} />
+                        ))}
+                      </div>
+                    )}
+                  </p>
+                  <Badge variant="outline" className={cn("text-[8px] font-black uppercase px-1 h-3.5 mt-0.5 truncate", getSkillColor(player.skillLevel))}>
+                    {SKILL_LEVELS_SHORT[player.skillLevel]}
+                  </Badge>
+                </div>
               </div>
-            </div>
-            <div className="flex gap-4 items-center shrink-0">
-              <div className="text-center">
-                <p className="text-lg font-black text-primary">{player.wins}</p>
-                <p className="text-[7px] font-black uppercase text-muted-foreground">W</p>
+              <div className="flex gap-4 items-center shrink-0">
+                <div className="text-center">
+                  <p className="text-lg font-black text-primary">{player.wins}</p>
+                  <p className="text-[7px] font-black uppercase text-muted-foreground">W</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-compact font-black opacity-60">{player.winRate.toFixed(0)}%</p>
+                  <p className="text-[7px] font-black uppercase text-muted-foreground">WR</p>
+                </div>
+                <div className="text-right min-w-[32px]">
+                  <p className={cn("text-tiny font-black", player.pointDiff > 0 ? "text-green-600" : "text-destructive")}>
+                    {player.pointDiff > 0 ? `+${player.pointDiff}` : player.pointDiff}
+                  </p>
+                  <p className="text-[7px] font-black uppercase text-muted-foreground">DIFF</p>
+                </div>
               </div>
-              <div className="text-center">
-                <p className="text-compact font-black opacity-60">{player.winRate.toFixed(0)}%</p>
-                <p className="text-[7px] font-black uppercase text-muted-foreground">WR</p>
-              </div>
-              <div className="text-right min-w-[32px]">
-                <p className={cn("text-tiny font-black", player.pointDiff > 0 ? "text-green-600" : "text-destructive")}>
-                  {player.pointDiff > 0 ? `+${player.pointDiff}` : player.pointDiff}
-                </p>
-                <p className="text-[7px] font-black uppercase text-muted-foreground">DIFF</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
+            </CardContent>
+          </Card>
+        );
+      })}
       {data.length === 0 && (
         <div className="text-center py-20 border-4 border-dashed rounded-2xl bg-secondary/10 flex flex-col items-center">
           <Target className="h-10 w-10 mb-2 opacity-10" />
@@ -143,10 +171,10 @@ export default function RankingsPage() {
           </div>
         </div>
         <TabsContent value="daily">
-          <RenderLeaderboard data={dailyRankings} />
+          <RenderLeaderboard data={dailyRankings} isDaily={true} />
         </TabsContent>
         <TabsContent value="monthly">
-          <RenderLeaderboard data={monthlyRankings} />
+          <RenderLeaderboard data={monthlyRankings} isDaily={false} />
         </TabsContent>
       </Tabs>
     </div>

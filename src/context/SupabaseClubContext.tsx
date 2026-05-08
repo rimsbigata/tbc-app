@@ -18,12 +18,13 @@ interface ClubContextType {
   sessionParticipations: SessionParticipation[]
   defaultWinningScore: number
   autoAdvanceEnabled: boolean
+  doubleStarBoostEnabled: boolean
   userRole: UserRole | null
   setUserRole: (role: UserRole | null) => void
   isAdmin: boolean
   isQueueMaster: boolean
   isPlayer: boolean
-  addPlayer: (player: Omit<Player, 'id' | 'wins' | 'gamesPlayed' | 'partnerHistory' | 'status' | 'improvementScore' | 'totalPlayTimeMinutes' | 'lastAvailableAt'>) => Promise<void>
+  addPlayer: (player: Omit<Player, 'id' | 'wins' | 'gamesPlayed' | 'partnerHistory' | 'status' | 'improvementScore' | 'totalPlayTimeMinutes' | 'lastAvailableAt' | 'stars'>) => Promise<void>
   updatePlayer: (id: string, updates: Partial<Player>) => Promise<void>
   deletePlayer: (id: string) => Promise<void>
   addCourt: (name?: string) => Promise<string>
@@ -40,10 +41,12 @@ interface ClubContextType {
   addPaymentMethod: (name: string, imageData: string) => Promise<void>
   deletePaymentMethod: (id: string) => Promise<void>
   setDefaultWinningScore: (score: number) => Promise<void>
-  setAutoAdvanceEnabled: (enabled: boolean) => Promise<void>
+  setAutoAdvanceEnabled: (enabled: boolean) => void
+  setDoubleStarBoostEnabled: (enabled: boolean) => void
   resetDailyBoard: () => Promise<void>
   wipeAllData: () => Promise<void>
   deleteMatch: (matchId: string) => Promise<void>
+  endSession: (sessionId: string) => Promise<void>
   createSession: (sessionDate: string) => Promise<string>
   addPlayerToSession: (sessionId: string, playerId: string) => Promise<void>
   ingestPlayersFromList: (names: string[], sessionDate: string) => Promise<{ newPlayersCount: number; existingPlayersCount: number }>
@@ -61,6 +64,7 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
   const [sessionParticipations, setSessionParticipations] = useState<SessionParticipation[]>([])
   const [defaultWinningScore, setDefaultWinningScoreState] = useState<number>(21)
   const [autoAdvanceEnabled, setAutoAdvanceEnabledState] = useState<boolean>(true)
+  const [doubleStarBoostEnabled, setDoubleStarBoostEnabledState] = useState<boolean>(false)
   const [isLoaded, setIsLoaded] = useState(false)
   const [userRole, setUserRole] = useState<UserRole | null>(() => {
     if (typeof window !== 'undefined') {
@@ -88,6 +92,8 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       setSessionParticipations(localData.sessionParticipations)
       setDefaultWinningScoreState(localData.defaultWinningScore)
       setAutoAdvanceEnabledState(localData.autoAdvanceEnabled)
+      const savedDoubleStarBoost = localStorage.getItem('tbc_double_star_boost')
+      setDoubleStarBoostEnabledState(savedDoubleStarBoost !== null ? JSON.parse(savedDoubleStarBoost) : false)
       setIsLoaded(true)
     }
 
@@ -180,11 +186,28 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       }
 
       if (sessionsRes.data) {
-        setSessions(sessionsRes.data.map(s => ({
-          id: s.id,
-          sessionDate: s.session_date,
-          createdAt: new Date(s.created_at)
-        })))
+        // Load from local storage first
+        const localData = loadFromLocalStorage()
+        const localSessions = localData.sessions || []
+        
+        console.log('Loading sessions - local storage:', localSessions.length, 'Supabase:', sessionsRes.data.length)
+        
+        // Always use local storage as primary source of truth for sessions
+        // This ensures that ended sessions stay inactive
+        if (localSessions.length > 0) {
+          console.log('Using local storage sessions:', localSessions)
+          setSessions(localSessions)
+        } else {
+          // Only use Supabase if local storage is empty (first load)
+          const supabaseSessions = sessionsRes.data.map(s => ({
+            id: s.id,
+            sessionDate: s.session_date,
+            createdAt: new Date(s.created_at),
+            is_active: s.is_active ?? true
+          }))
+          console.log('Using Supabase sessions:', supabaseSessions)
+          setSessions(supabaseSessions)
+        }
       }
 
       if (sessionParticipationsRes.data) {
@@ -273,7 +296,8 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       status: 'available',
       improvementScore: 0,
       totalPlayTimeMinutes: 0,
-      lastAvailableAt: Date.now()
+      lastAvailableAt: Date.now(),
+      stars: 0
     }
 
     // Optimistic update to local state
@@ -831,32 +855,39 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
 
   const togglePayment = async (date: string, playerId: string) => {
     const fee = fees.find(f => f.id === date)
-    if (!fee) return
+    
+    // Create fee if it doesn't exist
+    if (!fee) {
+      const newFee = {
+        id: date,
+        shuttleFee: 0,
+        courtFee: 0,
+        entranceFee: 0,
+        payments: { [playerId]: true }
+      }
+      
+      // Optimistic update to local state (instant feedback)
+      const updatedFees = [...fees, newFee]
+      setFees(updatedFees)
+      saveToLocalStorage({ fees: updatedFees })
+      
+      console.log('Payment toggled (new fee):', { date, playerId, isPaid: true })
+      return
+    }
 
     const payments = { ...fee.payments }
     payments[playerId] = !payments[playerId]
 
     // Optimistic update to local state (instant feedback)
-    setFees(prev => prev.map(f => {
+    const updatedFees = fees.map(f => {
       if (f.id !== date) return f
       return { ...f, payments }
-    }))
-    saveToLocalStorage({ fees: fees.map(f => f.id === date ? { ...f, payments } : f) })
+    })
+    
+    setFees(updatedFees)
+    saveToLocalStorage({ fees: updatedFees })
 
-    // Sync to Supabase in background
-    const { error } = await supabase.from('fees').update({ is_paid: payments[playerId] }).eq('id', date)
-
-    if (error) {
-      console.error('Error syncing payment toggle to Supabase:', error)
-      // Revert on error
-      const revertedPayments = { ...fee.payments }
-      setFees(prev => prev.map(f => {
-        if (f.id !== date) return f
-        return { ...f, payments: revertedPayments }
-      }))
-    } else {
-      updateLastSync()
-    }
+    console.log('Payment toggled (existing fee):', { date, playerId, isPaid: payments[playerId] })
   }
 
   const addPaymentMethod = async (name: string, imageData: string) => {
@@ -913,6 +944,13 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
     updateLastSync()
   }
 
+  const setDoubleStarBoostEnabled = async (enabled: boolean) => {
+    // Optimistic update to local state
+    setDoubleStarBoostEnabledState(enabled)
+    localStorage.setItem('tbc_double_star_boost', JSON.stringify(enabled))
+    updateLastSync()
+  }
+
   const resetDailyBoard = async () => {
     await Promise.all([
       supabase.from('matches').update({ is_completed: true, status: 'cancelled' }).eq('is_completed', false),
@@ -941,14 +979,22 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
   }
 
   const wipeAllData = async () => {
-    await Promise.all([
-      supabase.from('players').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-      supabase.from('courts').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-      supabase.from('matches').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-      supabase.from('fees').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-      supabase.from('payment_methods').delete().neq('id', '00000000-0000-0000-0000-000000000000')
-    ])
+    // Try to sync to Supabase, but fail gracefully
+    try {
+      await Promise.all([
+        supabase.from('players').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+        supabase.from('courts').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+        supabase.from('matches').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+        supabase.from('fees').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+        supabase.from('payment_methods').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+        supabase.from('sessions').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+        supabase.from('session_participation').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+      ])
+    } catch (error) {
+      console.log('Supabase sync failed, using local storage only:', error)
+    }
 
+    // Clear local state
     setPlayers([])
     setCourts([])
     setMatches([])
@@ -958,23 +1004,48 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
     setSessionParticipations([])
     setDefaultWinningScoreState(21)
     setAutoAdvanceEnabledState(true)
+    
+    // Clear local storage
+    saveToLocalStorage({
+      players: [],
+      courts: [],
+      matches: [],
+      fees: [],
+      paymentMethods: [],
+      sessions: [],
+      sessionParticipations: []
+    })
+    
+    console.log('All club data wiped')
   }
 
   const createSession = async (sessionDate: string): Promise<string> => {
-    const { data, error } = await supabase
-      .from('sessions')
-      .insert({ session_date: sessionDate })
-      .select()
-      .single()
-
-    if (error) throw error
+    const sessionId = generateId()
     const newSession: Session = {
-      id: data.id,
-      sessionDate: data.session_date,
-      createdAt: new Date(data.created_at)
+      id: sessionId,
+      sessionDate,
+      createdAt: new Date(),
+      is_active: true
     }
+    
+    // Optimistic update to local state
     setSessions(prev => [newSession, ...prev])
-    return data.id
+    saveToLocalStorage({ sessions: [newSession, ...sessions] })
+    
+    console.log('Session created:', newSession)
+    
+    // Try to sync to Supabase, but fail gracefully
+    try {
+      await supabase
+        .from('sessions')
+        .insert({ session_date: sessionDate })
+        .select()
+        .single()
+    } catch (error) {
+      console.log('Supabase sync failed, using local storage only:', error)
+    }
+    
+    return sessionId
   }
 
   const addPlayerToSession = async (sessionId: string, playerId: string) => {
@@ -1008,11 +1079,11 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       }
 
       // Parse names and handle uniqueness - filter empty lines and duplicates
-      const uniqueNames = [...new Set(names.map(n => n.trim()).filter(n => n.length > 0))]
+      const uniqueNames = [...new Set(names.map((n: string) => n.trim()).filter((n: string) => n.length > 0))]
       const nameMap = new Map<string, { firstName: string; lastName: string; fullName: string; displayName: string }>()
       const firstNameCount = new Map<string, number>()
 
-      uniqueNames.forEach(name => {
+      uniqueNames.forEach((name: string) => {
         const trimmed = name.trim()
         if (!trimmed) return
 
@@ -1134,18 +1205,54 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const endSession = async (sessionId: string) => {
+    console.log('Ending session:', sessionId)
+    
+    // Optimistic update to local state - mark session as inactive
+    const updatedSessions = sessions.map(s => {
+      if (s.id === sessionId) {
+        console.log('Marking session as inactive:', s.id, 'was:', s.is_active)
+        return { ...s, is_active: false }
+      }
+      return s
+    })
+    
+    console.log('Updated sessions:', updatedSessions)
+    setSessions(updatedSessions)
+    saveToLocalStorage({ sessions: updatedSessions })
+    
+    // Verify local storage was saved
+    const savedData = loadFromLocalStorage()
+    console.log('Saved sessions in local storage:', savedData.sessions)
+    
+    // Clear all session-related state (players, matches, courts)
+    setPlayers([])
+    setMatches([])
+    setCourts([])
+    saveToLocalStorage({ players: [], matches: [], courts: [] })
+    
+    // Try to sync to Supabase with a simple update
+    try {
+      await supabase.from('sessions').update({ is_active: false }).eq('id', sessionId)
+    } catch (error) {
+      console.log('Supabase sync failed, using local storage only:', error)
+    }
+    
+    console.log('Session ended and state cleared:', sessionId)
+  }
+
   if (!isLoaded) {
     return <SplashScreen />
   }
 
   return (
     <ClubContext.Provider value={{
-      players, courts, matches, fees, paymentMethods, sessions, sessionParticipations, defaultWinningScore, autoAdvanceEnabled,
+      players, courts, matches, fees, paymentMethods, sessions, sessionParticipations, defaultWinningScore, autoAdvanceEnabled, doubleStarBoostEnabled,
       userRole, setUserRole, isAdmin, isQueueMaster, isPlayer,
       addPlayer, updatePlayer, deletePlayer, addCourt, deleteCourt,
       startMatch, startTimer, updateMatchScore, endMatch, swapPlayer, assignMatchToCourt, createCourtAndAssignMatch, updateFee, togglePayment,
-      addPaymentMethod, deletePaymentMethod, resetDailyBoard, wipeAllData, deleteMatch, setDefaultWinningScore, setAutoAdvanceEnabled,
-      createSession, addPlayerToSession, ingestPlayersFromList
+      addPaymentMethod, deletePaymentMethod, resetDailyBoard, wipeAllData, deleteMatch, setDefaultWinningScore, setAutoAdvanceEnabled, setDoubleStarBoostEnabled,
+      createSession, addPlayerToSession, ingestPlayersFromList, endSession
     }}>
       {children}
     </ClubContext.Provider>
