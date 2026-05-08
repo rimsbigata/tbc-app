@@ -2,11 +2,11 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Player, Court, Match, Fee, PaymentMethod, Session, SessionParticipation } from '@/lib/types'
-import { generateId } from '@/lib/utils'
+import { Player, Court, Match, Fee, PaymentMethod, Session, SessionParticipation, MatchStatus, PlayerSnapshot } from '@/lib/types'
 import { SplashScreen } from '@/components/layout/SplashScreen'
 import { RealtimeChannel } from '@supabase/supabase-js'
 import { RoleSelector, UserRole } from '@/components/role/RoleSelector'
+import { loadFromLocalStorage, saveToLocalStorage, updateLastSync, getLastSync } from '@/lib/local-storage-sync'
 
 interface ClubContextType {
   players: Player[]
@@ -75,6 +75,23 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
   const supabase = createClient()
 
   useEffect(() => {
+    // Load from local storage first for instant UI
+    const localData = loadFromLocalStorage()
+    
+    if (localData.players.length > 0 || localData.courts.length > 0) {
+      setPlayers(localData.players)
+      setCourts(localData.courts)
+      setMatches(localData.matches)
+      setFees(localData.fees)
+      setPaymentMethods(localData.paymentMethods)
+      setSessions(localData.sessions)
+      setSessionParticipations(localData.sessionParticipations)
+      setDefaultWinningScoreState(localData.defaultWinningScore)
+      setAutoAdvanceEnabledState(localData.autoAdvanceEnabled)
+      setIsLoaded(true)
+    }
+
+    // Then load from Supabase in background
     loadData()
     setupRealtimeSubscription()
   }, [])
@@ -259,6 +276,11 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       lastAvailableAt: Date.now()
     }
 
+    // Optimistic update to local state
+    setPlayers(prev => [...prev, newPlayer])
+    saveToLocalStorage({ players: [...players, newPlayer] })
+
+    // Sync to Supabase in background
     const { error } = await supabase.from('players').insert({
       id: newPlayer.id,
       name: newPlayer.name,
@@ -272,12 +294,21 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       last_available_at: newPlayer.lastAvailableAt ? new Date(newPlayer.lastAvailableAt).toISOString() : null
     })
 
-    if (!error) {
-      setPlayers(prev => [...prev, newPlayer])
+    if (error) {
+      console.error('Error syncing player to Supabase:', error)
+      // Revert local state on error
+      setPlayers(prev => prev.filter(p => p.id !== newPlayer.id))
+    } else {
+      updateLastSync()
     }
   }
 
   const updatePlayer = async (id: string, updates: Partial<Player>) => {
+    // Optimistic update to local state
+    setPlayers(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p))
+    saveToLocalStorage({ players: players.map(p => p.id === id ? { ...p, ...updates } : p) })
+
+    // Sync to Supabase in background
     const { error } = await supabase.from('players').update({
       name: updates.name,
       skill_level: updates.skillLevel,
@@ -290,15 +321,29 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       last_available_at: updates.lastAvailableAt ? new Date(updates.lastAvailableAt).toISOString() : null
     }).eq('id', id)
 
-    if (!error) {
-      setPlayers(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p))
+    if (error) {
+      console.error('Error syncing player update to Supabase:', error)
+      // Reload from Supabase to revert
+      loadData()
+    } else {
+      updateLastSync()
     }
   }
 
   const deletePlayer = async (id: string) => {
+    // Optimistic update to local state
+    setPlayers(prev => prev.filter(p => p.id !== id))
+    saveToLocalStorage({ players: players.filter(p => p.id !== id) })
+
+    // Sync to Supabase in background
     const { error } = await supabase.from('players').delete().eq('id', id)
-    if (!error) {
-      setPlayers(prev => prev.filter(p => p.id !== id))
+
+    if (error) {
+      console.error('Error syncing player deletion to Supabase:', error)
+      // Reload from Supabase to revert
+      loadData()
+    } else {
+      updateLastSync()
     }
   }
 
@@ -316,20 +361,23 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       current_match_id: null
     }
 
+    // Optimistic update to local state
+    setCourts(prev => [...prev, {
+      id,
+      name: newCourt.name,
+      status: newCourt.status as 'available',
+      currentMatchId: null
+    }])
+    saveToLocalStorage({ courts: [...courts, { id, name: newCourt.name, status: 'available', currentMatchId: null }] })
+
+    // Sync to Supabase in background
     const { error } = await supabase.from('courts').insert(newCourt)
+
     if (error) {
-      console.error('Error adding court:', error)
-      console.error('Error Code:', error.code);
-      console.error('Error Message:', error.message);
-      console.error('Error Details:', error.details);
-      console.log('JSON Error:', JSON.stringify(error, null, 2));
+      console.error('Error syncing court to Supabase:', error)
+      setCourts(prev => prev.filter(c => c.id !== id))
     } else {
-      setCourts(prev => [...prev, {
-        id,
-        name: newCourt.name,
-        status: newCourt.status as 'available',
-        currentMatchId: null
-      }])
+      updateLastSync()
     }
     return id
   }
@@ -339,9 +387,19 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
     if (court?.currentMatchId) {
       await deleteMatch(court.currentMatchId)
     }
+
+    // Optimistic update to local state
+    setCourts(prev => prev.filter(c => c.id !== id))
+    saveToLocalStorage({ courts: courts.filter(c => c.id !== id) })
+
+    // Sync to Supabase in background
     const { error } = await supabase.from('courts').delete().eq('id', id)
-    if (!error) {
-      setCourts(prev => prev.filter(c => c.id !== id))
+
+    if (error) {
+      console.error('Error syncing court deletion to Supabase:', error)
+      loadData()
+    } else {
+      updateLastSync()
     }
   }
 
@@ -377,6 +435,27 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       status: 'ongoing'
     }
 
+    // Optimistic update to local state
+    setMatches(prev => [newMatch, ...prev])
+    saveToLocalStorage({ matches: [newMatch, ...matches] })
+
+    if (targetCourtId) {
+      setCourts(prev => prev.map(c =>
+        c.id === targetCourtId
+          ? { ...c, status: 'occupied', currentMatchId: newMatchId }
+          : c
+      ))
+      saveToLocalStorage({ courts: courts.map(c => c.id === targetCourtId ? { ...c, status: 'occupied', currentMatchId: newMatchId } : c) })
+    }
+
+    setPlayers(prev => prev.map(p =>
+      [...matchData.teamA, ...matchData.teamB].includes(p.id)
+        ? { ...p, status: 'playing', lastAvailableAt: undefined }
+        : p
+    ))
+    saveToLocalStorage({ players: players.map(p => [...matchData.teamA, ...matchData.teamB].includes(p.id) ? { ...p, status: 'playing', lastAvailableAt: undefined } : p) })
+
+    // Sync to Supabase in background
     const { error } = await supabase.from('matches').insert({
       id: newMatch.id,
       team_a: newMatch.teamA,
@@ -394,34 +473,35 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       winner: newMatch.winner
     })
 
-    if (!error) {
-      setMatches(prev => [newMatch, ...prev])
-
+    if (error) {
+      console.error('Error syncing match to Supabase:', error)
+      loadData()
+    } else {
       if (targetCourtId) {
         await supabase.from('courts').update({ status: 'occupied', current_match_id: newMatchId }).eq('id', targetCourtId)
-        setCourts(prev => prev.map(c =>
-          c.id === targetCourtId
-            ? { ...c, status: 'occupied', currentMatchId: newMatchId }
-            : c
-        ))
       }
 
       const playerUpdates = [...matchData.teamA, ...matchData.teamB].map(id =>
         supabase.from('players').update({ status: 'playing', last_available_at: null }).eq('id', id)
       )
       await Promise.all(playerUpdates)
-      setPlayers(prev => prev.map(p =>
-        [...matchData.teamA, ...matchData.teamB].includes(p.id)
-          ? { ...p, status: 'playing', lastAvailableAt: undefined }
-          : p
-      ))
+      updateLastSync()
     }
   }
 
   const updateMatchScore = async (matchId: string, teamAScore: number, teamBScore: number) => {
+    // Optimistic update to local state
+    setMatches(prev => prev.map(m => m.id === matchId ? { ...m, teamAScore, teamBScore } : m))
+    saveToLocalStorage({ matches: matches.map(m => m.id === matchId ? { ...m, teamAScore, teamBScore } : m) })
+
+    // Sync to Supabase in background
     const { error } = await supabase.from('matches').update({ team_a_score: teamAScore, team_b_score: teamBScore }).eq('id', matchId)
-    if (!error) {
-      setMatches(prev => prev.map(m => m.id === matchId ? { ...m, teamAScore, teamBScore } : m))
+
+    if (error) {
+      console.error('Error syncing match score to Supabase:', error)
+      loadData()
+    } else {
+      updateLastSync()
     }
   }
 
@@ -435,6 +515,75 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
     const startTime = match.startTime ? new Date(match.startTime) : null
     const playDuration = startTime ? Math.floor((Date.now() - startTime.getTime()) / 60000) : 0
 
+    // Optimistic update to local state
+    setMatches(prev => prev.map(m =>
+      m.id === court.currentMatchId
+        ? { ...m, isCompleted: status === 'completed', status, winner, teamAScore, teamBScore, endTime: new Date().toISOString() }
+        : m
+    ))
+    saveToLocalStorage({ matches: matches.map(m => m.id === court.currentMatchId ? { ...m, isCompleted: status === 'completed', status, winner, teamAScore, teamBScore, endTime: new Date().toISOString() } : m) })
+
+    setCourts(prev => prev.map(c =>
+      c.id === courtId ? { ...c, status: 'available', currentMatchId: null } : c
+    ))
+    saveToLocalStorage({ courts: courts.map(c => c.id === courtId ? { ...c, status: 'available', currentMatchId: null } : c) })
+
+    setPlayers(prev => prev.map(p => {
+      if (![...match.teamA, ...match.teamB].includes(p.id)) return p
+
+      if (status === 'cancelled') {
+        return { ...p, status: 'available', lastAvailableAt: Date.now() }
+      }
+
+      const isTeamA = match.teamA.includes(p.id)
+      const partnerId = isTeamA ? match.teamA.find(id => id !== p.id) : match.teamB.find(id => id !== p.id)
+      const newHistory = partnerId ? [partnerId, ...p.partnerHistory].slice(0, 5) : p.partnerHistory
+
+      let won = false
+      if (winner) {
+        won = (winner === 'teamA' && isTeamA) || (winner === 'teamB' && !isTeamA)
+      } else if (teamAScore !== undefined && teamBScore !== undefined) {
+        won = (teamAScore > teamBScore && isTeamA) || (teamBScore > teamAScore && !isTeamA)
+      }
+
+      return {
+        ...p,
+        status: 'available',
+        lastAvailableAt: Date.now(),
+        wins: (p.wins || 0) + (won ? 1 : 0),
+        gamesPlayed: (p.gamesPlayed || 0) + 1,
+        partnerHistory: newHistory,
+        improvementScore: Math.max(0, (p.improvementScore || 0) + (won ? 5 : -2)),
+        totalPlayTimeMinutes: (p.totalPlayTimeMinutes || 0) + playDuration
+      }
+    }))
+    saveToLocalStorage({ players: players.map(p => {
+      if (![...match.teamA, ...match.teamB].includes(p.id)) return p
+      if (status === 'cancelled') {
+        return { ...p, status: 'available', lastAvailableAt: Date.now() }
+      }
+      const isTeamA = match.teamA.includes(p.id)
+      const partnerId = isTeamA ? match.teamA.find(id => id !== p.id) : match.teamB.find(id => id !== p.id)
+      const newHistory = partnerId ? [partnerId, ...p.partnerHistory].slice(0, 5) : p.partnerHistory
+      let won = false
+      if (winner) {
+        won = (winner === 'teamA' && isTeamA) || (winner === 'teamB' && !isTeamA)
+      } else if (teamAScore !== undefined && teamBScore !== undefined) {
+        won = (teamAScore > teamBScore && isTeamA) || (teamBScore > teamAScore && !isTeamA)
+      }
+      return {
+        ...p,
+        status: 'available',
+        lastAvailableAt: Date.now(),
+        wins: (p.wins || 0) + (won ? 1 : 0),
+        gamesPlayed: (p.gamesPlayed || 0) + 1,
+        partnerHistory: newHistory,
+        improvementScore: Math.max(0, (p.improvementScore || 0) + (won ? 5 : -2)),
+        totalPlayTimeMinutes: (p.totalPlayTimeMinutes || 0) + playDuration
+      }
+    }) })
+
+    // Sync to Supabase in background
     const { error } = await supabase.from('matches').update({
       is_completed: status === 'completed',
       status,
@@ -444,17 +593,11 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       end_time: new Date().toISOString()
     }).eq('id', court.currentMatchId)
 
-    if (!error) {
-      setMatches(prev => prev.map(m =>
-        m.id === court.currentMatchId
-          ? { ...m, isCompleted: status === 'completed', status, winner, teamAScore, teamBScore, endTime: new Date().toISOString() }
-          : m
-      ))
-
+    if (error) {
+      console.error('Error syncing match end to Supabase:', error)
+      loadData()
+    } else {
       await supabase.from('courts').update({ status: 'available', current_match_id: null }).eq('id', courtId)
-      setCourts(prev => prev.map(c =>
-        c.id === courtId ? { ...c, status: 'available', currentMatchId: null } : c
-      ))
 
       const playerUpdates = [...match.teamA, ...match.teamB].map(playerId => {
         const p = players.find(player => player.id === playerId)
@@ -487,36 +630,7 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       }).filter(Boolean)
 
       await Promise.all(playerUpdates)
-
-      setPlayers(prev => prev.map(p => {
-        if (![...match.teamA, ...match.teamB].includes(p.id)) return p
-
-        if (status === 'cancelled') {
-          return { ...p, status: 'available', lastAvailableAt: Date.now() }
-        }
-
-        const isTeamA = match.teamA.includes(p.id)
-        const partnerId = isTeamA ? match.teamA.find(id => id !== p.id) : match.teamB.find(id => id !== p.id)
-        const newHistory = partnerId ? [partnerId, ...p.partnerHistory].slice(0, 5) : p.partnerHistory
-
-        let won = false
-        if (winner) {
-          won = (winner === 'teamA' && isTeamA) || (winner === 'teamB' && !isTeamA)
-        } else if (teamAScore !== undefined && teamBScore !== undefined) {
-          won = (teamAScore > teamBScore && isTeamA) || (teamBScore > teamAScore && !isTeamA)
-        }
-
-        return {
-          ...p,
-          status: 'available',
-          lastAvailableAt: Date.now(),
-          wins: (p.wins || 0) + (won ? 1 : 0),
-          gamesPlayed: (p.gamesPlayed || 0) + 1,
-          partnerHistory: newHistory,
-          improvementScore: Math.max(0, (p.improvementScore || 0) + (won ? 5 : -2)),
-          totalPlayTimeMinutes: (p.totalPlayTimeMinutes || 0) + playDuration
-        }
-      }))
+      updateLastSync()
 
       if (autoAdvanceEnabled && status === 'completed') {
         autoAdvanceToCourt(courtId)
@@ -533,23 +647,48 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
 
     const nextMatch = queue[0]
 
-    await supabase.from('matches').update({ court_id: targetCourtId, status: 'ongoing' }).eq('id', nextMatch.id)
+    // Optimistic update to local state
     setMatches(prev => prev.map(m =>
       m.id === nextMatch.id ? { ...m, courtId: targetCourtId, status: 'ongoing' as MatchStatus } : m
     ))
+    saveToLocalStorage({ matches: matches.map(m => m.id === nextMatch.id ? { ...m, courtId: targetCourtId, status: 'ongoing' } : m) })
 
-    await supabase.from('courts').update({ status: 'occupied', current_match_id: nextMatch.id }).eq('id', targetCourtId)
     setCourts(prev => prev.map(c =>
       c.id === targetCourtId
         ? { ...c, status: 'occupied', currentMatchId: nextMatch.id }
         : c
     ))
+    saveToLocalStorage({ courts: courts.map(c => c.id === targetCourtId ? { ...c, status: 'occupied', currentMatchId: nextMatch.id } : c) })
+
+    // Sync to Supabase in background
+    await supabase.from('matches').update({ court_id: targetCourtId, status: 'ongoing' }).eq('id', nextMatch.id)
+    await supabase.from('courts').update({ status: 'occupied', current_match_id: nextMatch.id }).eq('id', targetCourtId)
+    updateLastSync()
   }
 
   const deleteMatch = async (matchId: string) => {
     const match = matches.find(m => m.id === matchId)
     if (!match) return
 
+    // Optimistic update to local state
+    setPlayers(prev => prev.map(p =>
+      [...match.teamA, ...match.teamB].includes(p.id)
+        ? { ...p, status: 'available', lastAvailableAt: Date.now() }
+        : p
+    ))
+    saveToLocalStorage({ players: players.map(p => [...match.teamA, ...match.teamB].includes(p.id) ? { ...p, status: 'available', lastAvailableAt: Date.now() } : p) })
+
+    if (match.courtId) {
+      setCourts(prev => prev.map(c =>
+        c.id === match.courtId ? { ...c, status: 'available', currentMatchId: null } : c
+      ))
+      saveToLocalStorage({ courts: courts.map(c => c.id === match.courtId ? { ...c, status: 'available', currentMatchId: null } : c) })
+    }
+
+    setMatches(prev => prev.filter(m => m.id !== matchId))
+    saveToLocalStorage({ matches: matches.filter(m => m.id !== matchId) })
+
+    // Sync to Supabase in background
     const playerUpdates = [...match.teamA, ...match.teamB].map(id =>
       supabase.from('players').update({ status: 'available', last_available_at: new Date().toISOString() }).eq('id', id)
     )
@@ -560,20 +699,12 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
     }
 
     const { error } = await supabase.from('matches').delete().eq('id', matchId)
-    if (!error) {
-      setPlayers(prev => prev.map(p =>
-        [...match.teamA, ...match.teamB].includes(p.id)
-          ? { ...p, status: 'available', lastAvailableAt: Date.now() }
-          : p
-      ))
 
-      if (match.courtId) {
-        setCourts(prev => prev.map(c =>
-          c.id === match.courtId ? { ...c, status: 'available', currentMatchId: null } : c
-        ))
-      }
-
-      setMatches(prev => prev.filter(m => m.id !== matchId))
+    if (error) {
+      console.error('Error syncing match deletion to Supabase:', error)
+      loadData()
+    } else {
+      updateLastSync()
     }
   }
 
@@ -591,6 +722,28 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
     const newTeamASnapshots = isTeamA ? match.teamASnapshots?.map(s => s.id === oldPlayerId ? newSnapshot : s) : match.teamASnapshots
     const newTeamBSnapshots = !isTeamA ? match.teamBSnapshots?.map(s => s.id === oldPlayerId ? newSnapshot : s) : match.teamBSnapshots
 
+    // Optimistic update to local state
+    setMatches(prev => prev.map(m => m.id === matchId ? {
+      ...m,
+      teamA: newTeamA,
+      teamB: newTeamB,
+      teamASnapshots: newTeamASnapshots,
+      teamBSnapshots: newTeamBSnapshots
+    } : m))
+    saveToLocalStorage({ matches: matches.map(m => m.id === matchId ? { ...m, teamA: newTeamA, teamB: newTeamB, teamASnapshots: newTeamASnapshots, teamBSnapshots: newTeamBSnapshots } : m) })
+
+    setPlayers(prev => prev.map(p => {
+      if (p.id === oldPlayerId) return { ...p, status: 'available', lastAvailableAt: Date.now() }
+      if (p.id === newPlayerId) return { ...p, status: 'playing', lastAvailableAt: undefined }
+      return p
+    }))
+    saveToLocalStorage({ players: players.map(p => {
+      if (p.id === oldPlayerId) return { ...p, status: 'available', lastAvailableAt: Date.now() }
+      if (p.id === newPlayerId) return { ...p, status: 'playing', lastAvailableAt: undefined }
+      return p
+    }) })
+
+    // Sync to Supabase in background
     const { error } = await supabase.from('matches').update({
       team_a: newTeamA,
       team_b: newTeamB,
@@ -598,36 +751,32 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       team_b_snapshots: newTeamBSnapshots
     }).eq('id', matchId)
 
-    if (!error) {
-      setMatches(prev => prev.map(m => m.id === matchId ? {
-        ...m,
-        teamA: newTeamA,
-        teamB: newTeamB,
-        teamASnapshots: newTeamASnapshots,
-        teamBSnapshots: newTeamBSnapshots
-      } : m))
-
+    if (error) {
+      console.error('Error syncing player swap to Supabase:', error)
+      loadData()
+    } else {
       await supabase.from('players').update({ status: 'available', last_available_at: new Date().toISOString() }).eq('id', oldPlayerId)
       await supabase.from('players').update({ status: 'playing', last_available_at: null }).eq('id', newPlayerId)
-
-      setPlayers(prev => prev.map(p => {
-        if (p.id === oldPlayerId) return { ...p, status: 'available', lastAvailableAt: Date.now() }
-        if (p.id === newPlayerId) return { ...p, status: 'playing', lastAvailableAt: undefined }
-        return p
-      }))
+      updateLastSync()
     }
   }
 
   const assignMatchToCourt = async (matchId: string, courtId: string) => {
-    await supabase.from('matches').update({ court_id: courtId, status: 'ongoing' }).eq('id', matchId)
-    await supabase.from('courts').update({ status: 'occupied', current_match_id: matchId }).eq('id', courtId)
-
+    // Optimistic update to local state
     setMatches(prev => prev.map(m => m.id === matchId ? { ...m, courtId, status: 'ongoing' } : m))
+    saveToLocalStorage({ matches: matches.map(m => m.id === matchId ? { ...m, courtId, status: 'ongoing' } : m) })
+
     setCourts(prev => prev.map(c =>
       c.id === courtId
         ? { ...c, status: 'occupied', currentMatchId: matchId }
         : c
     ))
+    saveToLocalStorage({ courts: courts.map(c => c.id === courtId ? { ...c, status: 'occupied', currentMatchId: matchId } : c) })
+
+    // Sync to Supabase in background
+    await supabase.from('matches').update({ court_id: courtId, status: 'ongoing' }).eq('id', matchId)
+    await supabase.from('courts').update({ status: 'occupied', current_match_id: matchId }).eq('id', courtId)
+    updateLastSync()
   }
 
   const createCourtAndAssignMatch = async (matchId: string) => {
@@ -638,16 +787,30 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
   const startTimer = async (courtId: string) => {
     const court = courts.find(c => c.id === courtId)
     if (court?.currentMatchId) {
-      await supabase.from('matches').update({ start_time: new Date().toISOString() }).eq('id', court.currentMatchId)
+      // Optimistic update to local state
       setMatches(prev => prev.map(m =>
         m.id === court.currentMatchId
           ? { ...m, startTime: new Date().toISOString() }
           : m
       ))
+      saveToLocalStorage({ matches: matches.map(m => m.id === court.currentMatchId ? { ...m, startTime: new Date().toISOString() } : m) })
+
+      // Sync to Supabase in background
+      await supabase.from('matches').update({ start_time: new Date().toISOString() }).eq('id', court.currentMatchId)
+      updateLastSync()
     }
   }
 
   const updateFee = async (data: any) => {
+    // Optimistic update to local state
+    setFees(prev => {
+      const exists = prev.find(f => f.id === data.id)
+      if (exists) return prev.map(f => f.id === data.id ? { ...f, ...data } : f)
+      return [...prev, { ...data, payments: {} }]
+    })
+    saveToLocalStorage({ fees: fees })
+
+    // Sync to Supabase in background
     const { error } = await supabase.from('fees').upsert({
       id: data.id,
       player_id: data.playerId || data.id,
@@ -657,12 +820,12 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       fee_type: 'shuttle',
       date: new Date().toISOString().split('T')[0]
     })
-    if (!error) {
-      setFees(prev => {
-        const exists = prev.find(f => f.id === data.id)
-        if (exists) return prev.map(f => f.id === data.id ? { ...f, ...data } : f)
-        return [...prev, { ...data, payments: {} }]
-      })
+
+    if (error) {
+      console.error('Error syncing fee to Supabase:', error)
+      loadData()
+    } else {
+      updateLastSync()
     }
   }
 
@@ -673,38 +836,81 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
     const payments = { ...fee.payments }
     payments[playerId] = !payments[playerId]
 
+    // Optimistic update to local state (instant feedback)
+    setFees(prev => prev.map(f => {
+      if (f.id !== date) return f
+      return { ...f, payments }
+    }))
+    saveToLocalStorage({ fees: fees.map(f => f.id === date ? { ...f, payments } : f) })
+
+    // Sync to Supabase in background
     const { error } = await supabase.from('fees').update({ is_paid: payments[playerId] }).eq('id', date)
-    if (!error) {
+
+    if (error) {
+      console.error('Error syncing payment toggle to Supabase:', error)
+      // Revert on error
+      const revertedPayments = { ...fee.payments }
       setFees(prev => prev.map(f => {
         if (f.id !== date) return f
-        return { ...f, payments }
+        return { ...f, payments: revertedPayments }
       }))
+    } else {
+      updateLastSync()
     }
   }
 
   const addPaymentMethod = async (name: string, imageData: string) => {
     const newMethod: PaymentMethod = { id: generateId(), name, imageUrl: imageData }
+    
+    // Optimistic update to local state
+    setPaymentMethods(prev => [...prev, newMethod])
+    saveToLocalStorage({ paymentMethods: [...paymentMethods, newMethod] })
+
+    // Sync to Supabase in background
     const { error } = await supabase.from('payment_methods').insert(newMethod)
-    if (!error) {
-      setPaymentMethods(prev => [...prev, newMethod])
+
+    if (error) {
+      console.error('Error syncing payment method to Supabase:', error)
+      setPaymentMethods(prev => prev.filter(pm => pm.id !== newMethod.id))
+    } else {
+      updateLastSync()
     }
   }
 
   const deletePaymentMethod = async (id: string) => {
+    // Optimistic update to local state
+    setPaymentMethods(prev => prev.filter(pm => pm.id !== id))
+    saveToLocalStorage({ paymentMethods: paymentMethods.filter(pm => pm.id !== id) })
+
+    // Sync to Supabase in background
     const { error } = await supabase.from('payment_methods').delete().eq('id', id)
-    if (!error) {
-      setPaymentMethods(prev => prev.filter(pm => pm.id !== id))
+
+    if (error) {
+      console.error('Error syncing payment method deletion to Supabase:', error)
+      loadData()
+    } else {
+      updateLastSync()
     }
   }
 
   const setDefaultWinningScore = async (score: number) => {
+    // Optimistic update to local state
     setDefaultWinningScoreState(score)
+    saveToLocalStorage({ defaultWinningScore: score })
+
+    // Sync to Supabase in background
     await supabase.from('settings').update({ value: score.toString() }).eq('key', 'default_winning_score')
+    updateLastSync()
   }
 
   const setAutoAdvanceEnabled = async (enabled: boolean) => {
+    // Optimistic update to local state
     setAutoAdvanceEnabledState(enabled)
+    saveToLocalStorage({ autoAdvanceEnabled: enabled })
+
+    // Sync to Supabase in background
     await supabase.from('settings').update({ value: enabled.toString() }).eq('key', 'auto_advance_enabled')
+    updateLastSync()
   }
 
   const resetDailyBoard = async () => {
@@ -803,7 +1009,7 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
 
       // Parse names and handle uniqueness - filter empty lines and duplicates
       const uniqueNames = [...new Set(names.map(n => n.trim()).filter(n => n.length > 0))]
-      const nameMap = new Map<string, { firstName: string; lastName: string; fullName: string }>()
+      const nameMap = new Map<string, { firstName: string; lastName: string; fullName: string; displayName: string }>()
       const firstNameCount = new Map<string, number>()
 
       uniqueNames.forEach(name => {
@@ -815,23 +1021,28 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
         const lastName = parts.slice(1).join(' ')
         const fullName = trimmed
 
-        nameMap.set(fullName, { firstName, lastName, fullName })
+        nameMap.set(fullName, { firstName, lastName, fullName, displayName: firstName })
         firstNameCount.set(firstName, (firstNameCount.get(firstName) || 0) + 1)
       })
 
-      // Check database for existing players by full_name
+      // Check database for existing players by both full_name and display_name to prevent clones
       const fullNamesToCheck = Array.from(nameMap.keys())
+      const displayNamesToCheck = Array.from(nameMap.values()).map(v => v.displayName)
+      
       const { data: existingDbPlayers, error: queryError } = await supabase
         .from('players')
-        .select('id, name, full_name')
-        .in('full_name', fullNamesToCheck)
+        .select('id, name, full_name, display_name')
+        .or(`full_name.in.(${fullNamesToCheck.map(n => `'${n}'`).join(',')}),display_name.in.(${displayNamesToCheck.map(n => `'${n}'`).join(',')})`)
 
       if (queryError) {
         console.error('Error querying existing players:', queryError)
         throw queryError
       }
 
-      const existingPlayersMap = new Map(existingDbPlayers?.map(p => [p.full_name, p]) || [])
+      // Create maps for both full_name and display_name to prevent clones
+      const existingPlayersByFullName = new Map(existingDbPlayers?.map(p => [p.full_name, p]) || [])
+      const existingPlayersByDisplayName = new Map(existingDbPlayers?.map(p => [p.display_name, p]) || [])
+      const existingPlayersMap = new Map([...existingPlayersByFullName, ...existingPlayersByDisplayName])
 
       // Generate display names with uniqueness check
       const playersToUpsert: { full_name: string; display_name: string; name: string }[] = []
@@ -839,26 +1050,28 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       const playersToLink: string[] = []
 
       for (const [fullName, nameData] of nameMap) {
-        const { firstName, lastName } = nameData
-        let displayName = firstName
+        const { firstName, lastName, displayName: initialDisplayName } = nameData
+        let displayName = initialDisplayName
 
         // If duplicate first name, append surname initial
         if ((firstNameCount.get(firstName) || 0) > 1 && lastName) {
           displayName = `${firstName} ${lastName.charAt(0)}.`
         }
 
-        // Check if player already exists in database by full_name
-        const existingDbPlayer = existingPlayersMap.get(fullName)
+        // Check if player already exists in database by full_name or display_name
+        const existingDbPlayer = existingPlayersByFullName.get(fullName) || existingPlayersByDisplayName.get(displayName)
         if (existingDbPlayer) {
-          // Link existing player to session
-          playersToLink.push(existingDbPlayer.id)
-          existingPlayersCount++
+          // Link existing player to session (avoid creating clone)
+          if (!playersToLink.includes(existingDbPlayer.id)) {
+            playersToLink.push(existingDbPlayer.id)
+            existingPlayersCount++
+          }
         } else {
-          // Mark for upsert
+          // Mark for upsert only if truly doesn't exist
           playersToUpsert.push({
             full_name: fullName,
             display_name: displayName,
-            name: displayName // Use display_name as the main name field for now
+            name: displayName
           })
         }
       }
@@ -888,7 +1101,7 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
             improvement_score: 0,
             total_play_time_minutes: 0
           })), {
-            onConflict: 'full_name',
+            onConflict: 'full_name,display_name',
             ignoreDuplicates: false
           })
           .select()

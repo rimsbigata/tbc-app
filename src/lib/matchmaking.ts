@@ -48,30 +48,41 @@ export function generateDeterministicMatch(
 
   // Phase C: Scoring
   const scoredCombos = combos.map(combo => {
-    // 1. Skill Gap
+    // 1. Skill Gap (weighted more heavily)
     const skillA = combo.teamA.reduce((sum, p) => sum + p.skillLevel, 0);
     const skillB = combo.teamB.reduce((sum, p) => sum + p.skillLevel, 0);
-    const skillGap = Math.abs(skillA - skillB);
+    const skillGap = Math.abs(skillA - skillB) * 2; // Double weight for skill gap
 
-    // 2. Partner Penalty (STRICT)
+    // 2. Partner Penalty (STRICT - check both directions)
     let penalty = 0;
 
     const checkPenalty = (pa: Player, pb: Player) => {
       let p = 0;
-      // Index 0: Most recent
-      if (pa.partnerHistory?.[0] === pb.id) p += 100;
-      // Index 1: 2 games ago
-      if (pa.partnerHistory?.[1] === pb.id) p += 25;
+      // Check if pa has pb in history
+      if (pa.partnerHistory?.[0] === pb.id) p += 200; // Increased penalty
+      if (pa.partnerHistory?.[1] === pb.id) p += 50; // Increased penalty
+      if (pa.partnerHistory?.[2] === pb.id) p += 25; // Add 3rd game check
+      // Check if pb has pa in history (bidirectional check)
+      if (pb.partnerHistory?.[0] === pa.id) p += 200;
+      if (pb.partnerHistory?.[1] === pa.id) p += 50;
+      if (pb.partnerHistory?.[2] === pa.id) p += 25;
       return p;
     };
 
     penalty += checkPenalty(combo.teamA[0], combo.teamA[1]);
     penalty += checkPenalty(combo.teamB[0], combo.teamB[1]);
 
+    // 3. Games played balance penalty (prevent uneven experience)
+    const gamesA = combo.teamA.reduce((sum, p) => sum + (p.gamesPlayed || 0), 0);
+    const gamesB = combo.teamB.reduce((sum, p) => sum + (p.gamesPlayed || 0), 0);
+    const gamesGap = Math.abs(gamesA - gamesB) * 0.5;
+
     return {
       ...combo,
-      score: skillGap + penalty,
-      skillGap
+      score: skillGap + penalty + gamesGap,
+      skillGap,
+      penalty,
+      gamesGap
     };
   });
 
