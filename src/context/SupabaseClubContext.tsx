@@ -1039,6 +1039,10 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
       sessionParticipations: []
     })
     
+    // Clear user role from localStorage to redirect to role selection
+    localStorage.removeItem('userRole')
+    setUserRole(null)
+    
     console.log('All club data wiped')
   }
 

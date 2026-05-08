@@ -108,6 +108,8 @@ export default function SettingsPage() {
     if (typeof window !== 'undefined' && window.confirm("Delete EVERYTHING? This cannot be undone.")) {
       wipeAllData();
       toast({ title: "All data wiped" });
+      // Redirect to initial page which will trigger role selection
+      router.push('/');
     }
   };
 

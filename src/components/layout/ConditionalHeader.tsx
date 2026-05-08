@@ -6,8 +6,8 @@ import { Header } from './Header';
 export function ConditionalHeader() {
   const pathname = usePathname();
   
-  // Hide header on sessions route
-  if (pathname === '/sessions') {
+  // Hide header on sessions, player, and join routes
+  if (pathname === '/sessions' || pathname === '/player' || pathname?.startsWith('/join/')) {
     return null;
   }
   
