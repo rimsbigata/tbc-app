@@ -10,11 +10,11 @@ export function RoleSelectorWrapper({ children }: { children: React.ReactNode })
 
   const handleRoleSelect = (role: UserRole) => {
     setUserRole(role);
-    // Redirect admin and queue master to sessions page, player to dashboard
+    // Redirect admin and queue master to sessions page, player to initial page
     if (role === 'admin' || role === 'queue_master') {
       router.push('/sessions');
     } else {
-      router.push('/');
+      router.push('/player');
     }
   };
 

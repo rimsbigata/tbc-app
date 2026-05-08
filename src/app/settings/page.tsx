@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { RefreshCcw, Trash2, QrCode, Upload, Loader2, Sun, Moon, Palette, Settings as SettingsIcon, Trophy, Zap, Power } from 'lucide-react';
+import { RefreshCcw, Trash2, QrCode, Upload, Loader2, Sun, Moon, Palette, Settings as SettingsIcon, Trophy, Zap, Power, Share2, Check } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import Image from 'next/image';
 
@@ -28,6 +28,20 @@ export default function SettingsPage() {
 
   const [newMethodName, setNewMethodName] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [copiedSessionLink, setCopiedSessionLink] = useState(false);
+
+  const handleShareSessionLink = () => {
+    const activeSession = sessions.find(s => s.is_active);
+    if (activeSession) {
+      const link = `${window.location.origin}/join/${activeSession.id}`;
+      navigator.clipboard.writeText(link);
+      setCopiedSessionLink(true);
+      toast({ title: 'Session link copied to clipboard' });
+      setTimeout(() => setCopiedSessionLink(false), 2000);
+    } else {
+      toast({ title: 'No active session', variant: 'destructive' });
+    }
+  };
 
   const processAndUpload = (file: File, callback: (data: string) => void) => {
     const reader = new FileReader();
@@ -184,6 +198,37 @@ export default function SettingsPage() {
                     className="data-[state=checked]:bg-yellow-500"
                   />
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {(isAdmin || isQueueMaster) && (
+            <Card className="border-2 shadow-sm bg-primary/5 border-primary/20">
+              <CardHeader>
+                <CardTitle className="text-sm font-black uppercase tracking-widest text-primary">Session</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {sessions.filter(s => s.is_active).length > 0 ? (
+                  <Button
+                    onClick={handleShareSessionLink}
+                    variant="outline"
+                    className="w-full font-black uppercase text-[10px] border-primary/20 text-primary hover:bg-primary/10 gap-2"
+                  >
+                    {copiedSessionLink ? (
+                      <>
+                        <Check className="h-3 w-3 text-green-500" /> Link Copied
+                      </>
+                    ) : (
+                      <>
+                        <Share2 className="h-3 w-3" /> Share Session Link
+                      </>
+                    )}
+                  </Button>
+                ) : (
+                  <div className="p-4 text-center text-muted-foreground font-black uppercase text-xs border-2 border-dashed rounded-xl">
+                    No active session
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}

@@ -2,7 +2,8 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Player, Court, Match, Fee, PaymentMethod, Session, SessionParticipation, MatchStatus, PlayerSnapshot } from '@/lib/types'
+import { Player, Court, Match, Fee, PaymentMethod, Session, SessionParticipation, MatchStatus, PlayerSnapshot, SessionRegisteredPlayer } from '@/lib/types';
+import { sendNotificationToDevice, notifyMatchPlayers } from '@/lib/notifications';
 import { SplashScreen } from '@/components/layout/SplashScreen'
 import { RealtimeChannel } from '@supabase/supabase-js'
 import { RoleSelector, UserRole } from '@/components/role/RoleSelector'
@@ -478,6 +479,28 @@ export function SupabaseClubProvider({ children }: { children: ReactNode }) {
         : p
     ))
     saveToLocalStorage({ players: players.map(p => [...matchData.teamA, ...matchData.teamB].includes(p.id) ? { ...p, status: 'playing', lastAvailableAt: undefined } : p) })
+
+    // Send notifications to registered players
+    const activeSession = sessions.find(s => s.is_active)
+    if (activeSession && activeSession.registeredPlayers) {
+      const allPlayerIds = [...matchData.teamA, ...matchData.teamB]
+      allPlayerIds.forEach(playerId => {
+        const player = players.find(p => p.id === playerId)
+        if (player) {
+          // Find registered player by name match
+          const registeredPlayer = activeSession.registeredPlayers.find(rp => 
+            rp.name.toLowerCase() === player.name.toLowerCase()
+          )
+          if (registeredPlayer) {
+            sendNotificationToDevice(
+              registeredPlayer.deviceId,
+              'It\'s Your Turn!',
+              `You have been selected for a match. Please proceed to the court.`
+            )
+          }
+        }
+      })
+    }
 
     // Sync to Supabase in background
     const { error } = await supabase.from('matches').insert({

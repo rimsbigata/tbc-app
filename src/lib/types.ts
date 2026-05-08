@@ -8,6 +8,13 @@ export interface Session {
   sessionDate: string
   createdAt: Date
   is_active: boolean
+  registeredPlayers?: SessionRegisteredPlayer[]
+}
+
+export interface SessionRegisteredPlayer {
+  deviceId: string
+  name: string
+  joinedAt: string
 }
 
 export interface SessionParticipation {
