@@ -6,6 +6,7 @@ import { ThemeProvider } from '@/context/ThemeContext';
 import { Header } from '@/components/layout/Header';
 import { Analytics } from '@vercel/analytics/next';
 import { RoleSelectorWrapper } from '@/components/role/RoleSelectorWrapper';
+import { ConditionalHeader } from '@/components/layout/ConditionalHeader';
 
 export const metadata: Metadata = {
   title: 'TBC | Badminton Club',
@@ -32,7 +33,7 @@ export default function RootLayout({
           <SupabaseClubProvider>
             <RoleSelectorWrapper>
               <div className="flex flex-col h-screen md:min-h-screen w-full overflow-hidden">
-                <Header />
+                <ConditionalHeader />
                 <main className="flex-1 overflow-auto">
                   {children}
                 </main>
